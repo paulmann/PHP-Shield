@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation and wiki
+    url: https://github.com/paulmann/PHP-Shield/wiki
+    about: Configuration reference, tuning, troubleshooting and the upgrade guide.
+  - name: Report a vulnerability privately
+    url: https://github.com/paulmann/PHP-Shield/security/advisories/new
+    about: Never open a public issue for a security problem — see SECURITY.md.
+  - name: Support policy
+    url: https://github.com/paulmann/PHP-Shield/blob/main/SUPPORT.md
+    about: What to include in a report, and what is out of scope.

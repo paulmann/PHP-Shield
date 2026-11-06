@@ -16,4 +16,5 @@ Thumbs.db
 /storage/
 .ragraf/
 .zwork/
+.ghagent/
 *.bak-*

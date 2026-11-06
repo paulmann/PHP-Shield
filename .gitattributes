@@ -1,0 +1,15 @@
+# Normalise line endings and mark binaries.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.phar binary
+*.zip binary
+*.gz binary
+
+/composer.lock -diff
+*.md diff=markdown
+*.php diff=php

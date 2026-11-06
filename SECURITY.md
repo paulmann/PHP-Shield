@@ -11,7 +11,7 @@
 
 Please do **not** open a public issue for a security problem.
 
-- E-mail: **Mikhail@Deynekin.com** with the subject `PHP-Shield security`.
+- **Private report:** <https://github.com/paulmann/PHP-Shield/security/advisories/new>. If GitHub is unavailable to you, open a minimal issue asking for a private channel — without the details.
 - Include: affected version, a reproduction (request payload or config), the observed and the
   expected behaviour, and whether the issue is remotely exploitable.
 - You will get an initial answer within three working days.

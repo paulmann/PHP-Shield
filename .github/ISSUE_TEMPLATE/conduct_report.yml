@@ -1,0 +1,33 @@
+name: Report a conduct issue
+description: A confidential report about behaviour in this community (Contributor Covenant)
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This report is read by the maintainer only. Do not include personal data about anyone other
+        than what is necessary to describe the incident.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Facts and dates. Links to the comments or commits are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact on you
+      description: Optional. Only what you are comfortable sharing.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I understand the Code of Conduct and the enforcement guidelines
+          required: true

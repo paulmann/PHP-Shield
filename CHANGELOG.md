@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- README in six languages — English, Russian, German, Spanish, Chinese and Hindi — with a language switcher on every file.
+- A wiki under `wiki/`: sixteen pages covering configuration, detection, reputation, storage, rate limiting, the dashboard, reverse proxies, deployment, troubleshooting and the upgrade path. Built and published with `ghagent wiki`.
+- Repository hygiene: `.gitattributes`, `.editorconfig`, issue forms, a pull-request template, `CODEOWNERS`, Dependabot, `SUPPORT.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff`.
+- A social preview rendered by `ghagent assets` (`assets/social-preview.png` and `.svg`).
+
+### Changed
+
+- `docs/wiki.md` is now a map of the documentation instead of a second copy of it; the wiki is the single long-form source.
+- Vulnerability reports go through GitHub private reporting; the personal e-mail address was removed from `SECURITY.md` and `CONTRIBUTING.md`.
+- `AGENTS.md` points at the wiki and the shared rule map instead of repeating the reference tables.
+
 ## [2.0.0] - 2026-11-07
 
 The rebranded release: the project formerly shipped as *SecurityMiddleware* is now **PHP Shield**.
@@ -31,6 +46,9 @@ The rebranded release: the project formerly shipped as *SecurityMiddleware* is n
 - Block expiries are computed by the database (`NOW()`, `DATE_ADD`), removing a PHP/MySQL time-zone dependency.
 - CI matrix extended to PHP 8.5; the coding-standard step is mandatory again.
 - `ext-curl` documented as the transport for reputation lookups.
+- **Breaking:** `BlockStoreInterface::block()` takes a `$severity` argument; `countIncidents()` and `getRecentIncidents()` are required.
+- **Breaking:** `SecurityMiddleware::isRequestAllowed()` moved to `Shield`.
+- **Breaking:** the `composer.json` package name is `paulmann/php-shield`.
 
 ### Fixed
 
@@ -43,12 +61,6 @@ The rebranded release: the project formerly shipped as *SecurityMiddleware* is n
 - **`composer cs-check` always failed** — the config used a risky fixer without `setRiskyAllowed(true)`.
 - **Schema drift**: `migrations/schema.sql` disagreed with the runtime DDL (`INT` vs `BIGINT UNSIGNED`, `VARCHAR(50)` vs `64`, index names).
 - Command-injection backticks matched any `` `text` `` in prose; they now require a command name.
-
-### Breaking
-
-- `BlockStoreInterface::block()` takes a `$severity` argument; `countIncidents()` and `getRecentIncidents()` are required.
-- `SecurityMiddleware::isRequestAllowed()` moved to `Shield`.
-- `composer.json` package name is `paulmann/php-shield`.
 
 ## [1.1.0] - 2026-11-07
 
@@ -70,3 +82,8 @@ The rebranded release: the project formerly shipped as *SecurityMiddleware* is n
 ### Added
 
 - Initial modular release: detection rules, score-based blocking, modes, safe IP resolution, admin dashboard, payload redaction.
+
+[Unreleased]: https://github.com/paulmann/PHP-Shield/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/paulmann/PHP-Shield/releases/tag/v2.0.0
+[1.1.0]: https://github.com/paulmann/PHP-Shield/releases
+[1.0.0]: https://github.com/paulmann/PHP-Shield/releases

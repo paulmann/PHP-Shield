@@ -1,0 +1,29 @@
+{
+  "_comment": "Order and navigation for this wiki. English pages are canonical; every page in wiki/ must be listed here, and every listed page must exist.",
+  "repo": "paulmann/PHP-Shield",
+  "branch": "main",
+  "title": "PHP Shield",
+  "footer": "MIT",
+  "groups": [
+    {
+      "title": "Start",
+      "pages": ["Home.md", "01-Getting-Started.md", "02-Configuration.md"]
+    },
+    {
+      "title": "Core",
+      "pages": ["03-Detection-Rules.md", "04-IP-Reputation.md", "05-Modes-and-Blocks.md"]
+    },
+    {
+      "title": "Operations",
+      "pages": ["06-State-and-Storage.md", "07-Rate-Limiting.md", "08-Admin-Dashboard.md", "09-Reverse-Proxies.md"]
+    },
+    {
+      "title": "Deploy and support",
+      "pages": ["10-Production-Checklist.md", "11-Troubleshooting.md", "12-Upgrading.md"]
+    },
+    {
+      "title": "Background",
+      "pages": ["13-Architecture.md", "14-Security.md", "15-Development.md"]
+    }
+  ]
+}

@@ -51,5 +51,5 @@ Keep patterns conservative: a false positive in a security library is a customer
 
 ## Reporting security issues
 
-Report privately to **Mikhail@Deynekin.com** — see [SECURITY.md](SECURITY.md). Do not open a public
-issue for a vulnerability.
+Report privately through GitHub: <https://github.com/paulmann/PHP-Shield/security/advisories/new> —
+see [SECURITY.md](SECURITY.md). Do not open a public issue for a vulnerability.

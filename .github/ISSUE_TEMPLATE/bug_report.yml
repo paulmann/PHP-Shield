@@ -1,0 +1,84 @@
+name: Bug report
+description: Something in PHP Shield behaves differently from what the documentation says
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a vulnerability here — use the private route in SECURITY.md.
+        Read the wiki troubleshooting page first: most "everything is blocked" cases are a mode or
+        trusted_proxies setting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The observed behaviour and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision array
+      description: The array returned by inspect(), with any sensitive payload reduced.
+      render: text
+      placeholder: "['blocked' => true, 'status' => 403, 'reason' => 'threat_detected', 'score' => 90, 'findings' => ['xss']]"
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant keys only, secrets removed. Never paste an API key or a password hash.
+      render: php
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: PHP Shield version
+      placeholder: "2.0.0 (composer show paulmann/php-shield)"
+    validations:
+      required: true
+
+  - type: input
+    id: php
+    attributes:
+      label: PHP and extensions
+      placeholder: "PHP 8.3.14, ext-mysqli, ext-redis, ext-curl"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage and rate limiter
+      options:
+        - MySQL block store + database rate limiter
+        - MySQL block store + Redis rate limiter
+        - custom BlockStoreInterface implementation
+        - no state (detection only)
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest request or script that shows the problem.
+      render: php
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: This is not a security vulnerability (those go through SECURITY.md)
+          required: true
+        - label: I removed secrets, real addresses and production host names
+          required: true

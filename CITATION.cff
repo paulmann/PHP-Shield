@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you reference PHP Shield in academic or technical writing, cite it as below."
+title: "PHP Shield: modular request firewall for PHP"
+abstract: >-
+  A request firewall for PHP applications: local detection of SQL injection, XSS, command
+  injection, path traversal, file inclusion and scanner signatures; IPv4/IPv6 reputation from
+  AbuseIPDB.com and AbuseIPDB.ru with cache and circuit breaker; per-address rate limiting on MySQL
+  or Redis; severity-based IP blocking with an incident journal and an admin dashboard.
+type: software
+license: MIT
+repository-code: "https://github.com/paulmann/PHP-Shield"
+url: "https://github.com/paulmann/PHP-Shield"
+version: "2.0.0"
+date-released: "2026-11-07"
+keywords:
+  - php
+  - security
+  - web-application-firewall
+  - abuseipdb
+  - rate-limiting
+  - sql-injection
+  - xss
+authors:
+  - family-names: Deynekin
+    given-names: Mikhail
+    website: "https://Deynekin.com"

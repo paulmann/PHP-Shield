@@ -1,0 +1,50 @@
+name: Feature request
+description: A rule, a backend, a configuration option or a documentation gap
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today, and what does it cost you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+      description: The API or behaviour you would like. Configuration keys help.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Detection rule
+        - IP reputation provider
+        - Storage backend
+        - Rate limiter
+        - Admin dashboard
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing" — if the wiki already covers it, say so.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: This is a feature, not a security vulnerability
+          required: true
