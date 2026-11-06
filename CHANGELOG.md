@@ -18,6 +18,7 @@ The rebranded release: the project formerly shipped as *SecurityMiddleware* is n
 - `Support\SecurityHeaders::build()` for testing header sets without emitting them.
 - Anti-CSRF tokens, login lockout, session regeneration and cookie hardening in the admin dashboard; the configuration dump is masked.
 - `tools/db-selftest.php` (real MySQL integration test) and `tools/live-abuseipdb.php` (live reputation check).
+- `integration/abuseipdb-ru/` — reference adapter that replaces the hand-written middleware of the AbuseIPDB.RU platform with this package, plus its end-to-end test (verified: site smoke 7/7, adapter 15/15).
 - `SECURITY.md`, `docs/security-review.md`.
 
 ### Changed

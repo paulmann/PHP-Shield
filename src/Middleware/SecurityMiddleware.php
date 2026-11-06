@@ -24,7 +24,7 @@ use Deynekin\PhpShield\Support\Config;
  * severity (see severity_block_multipliers) and a permanent block is always an
  * explicit operator decision, never an automatic one.
  */
-final class SecurityMiddleware
+class SecurityMiddleware
 {
     public const SEVERITY_LOW = 'low';
 
