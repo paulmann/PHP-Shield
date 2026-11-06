@@ -64,12 +64,18 @@ medium 1 h, low 30 min (`severity_block_multipliers`).
 
 ## Rollback
 
+The safety copies live outside the repository, in
+`C:\AutoClaw\AbuseIPDB.ru\var\backup-php-shield-20261107\`:
+
 ```powershell
-Move-Item -Force src\Security\Protect\SecurityMiddleware.php.bak-20261107-php-shield `
+Copy-Item -Force C:\AutoClaw\AbuseIPDB.ru\var\backup-php-shield-20261107\SecurityMiddleware.php.bak-20261107-php-shield `
                 src\Security\Protect\SecurityMiddleware.php
 Remove-Item src\Security\Protect\DbBlockStore.php
-# bootstrap/autoload.php.bak-20261107-php-shield → bootstrap/autoload.php
+Copy-Item -Force C:\AutoClaw\AbuseIPDB.ru\var\backup-php-shield-20261107\autoload.php.bak-20261107-php-shield `
+                bootstrap\autoload.php
 ```
+
+Or undo the whole commit: `git revert 7a71981`.
 
 ## Verified on 2026-11-07
 
