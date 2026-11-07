@@ -16,11 +16,15 @@ use Deynekin\PhpShield\Storage\MysqlBlockStore;
 use Deynekin\PhpShield\Support\Config;
 use Deynekin\PhpShield\ThreatIntel\AbuseIpDbProvider;
 use Deynekin\PhpShield\ThreatIntel\ArrayReputationCache;
+use Deynekin\PhpShield\ThreatIntel\ArrayReputationQueue;
 use Deynekin\PhpShield\ThreatIntel\CurlTransport;
 use Deynekin\PhpShield\ThreatIntel\HttpTransportInterface;
 use Deynekin\PhpShield\ThreatIntel\MysqlReputationCache;
+use Deynekin\PhpShield\ThreatIntel\MysqlReputationQueue;
 use Deynekin\PhpShield\ThreatIntel\ReputationChecker;
 use Deynekin\PhpShield\ThreatIntel\ReputationProviderInterface;
+use Deynekin\PhpShield\ThreatIntel\ReputationQueueInterface;
+use Deynekin\PhpShield\ThreatIntel\ReputationWorker;
 use Redis;
 
 /**
@@ -87,6 +91,10 @@ class ShieldFactory
      * abuseipdb.com first and abuseipdb.ru second, so one outage does not blind
      * the shield. A provider without an API key is skipped silently.
      *
+     * `ip_reputation.mode` selects the behaviour: `async` (default) answers
+     * from the cache only and queues unknown addresses for the worker; `sync`
+     * performs the call inline.
+     *
      * @param array<string, mixed> $config
      */
     public static function createReputationChecker(
@@ -106,17 +114,81 @@ class ShieldFactory
             return null;
         }
 
+        $autoMigrate = $cfg->bool('auto_migrate', true);
+
         $cache = $mysqli instanceof \mysqli
-            ? new MysqlReputationCache($mysqli, $cfg->bool('auto_migrate', true))
+            ? new MysqlReputationCache($mysqli, $autoMigrate)
             : new ArrayReputationCache();
+
+        $async = self::isAsync($cfg);
 
         return new ReputationChecker(
             $providers,
             $cache,
             $cfg->nestedInt('ip_reputation.cache_ttl', 86400),
             $cfg->nestedInt('ip_reputation.circuit_breaker.failures', 5),
-            $cfg->nestedInt('ip_reputation.circuit_breaker.cooldown', 120)
+            $cfg->nestedInt('ip_reputation.circuit_breaker.cooldown', 120),
+            $async ? self::reputationQueue($cfg, $mysqli) : null,
+            $async
         );
+    }
+
+    /**
+     * Build the worker that drains the reputation queue.
+     *
+     * Returns null when reputation is disabled or configured for sync mode —
+     * in that case there is nothing to drain.
+     *
+     * @param array<string, mixed> $config
+     */
+    public static function createReputationWorker(
+        array $config,
+        \mysqli $mysqli,
+        ?HttpTransportInterface $transport = null
+    ): ?ReputationWorker {
+        $cfg = Config::fromArray($config);
+
+        if (!$cfg->nestedBool('ip_reputation.enabled', false) || !self::isAsync($cfg)) {
+            return null;
+        }
+
+        $providers = self::buildProviders($cfg, $transport ?? new CurlTransport());
+
+        if ($providers === []) {
+            return null;
+        }
+
+        $autoMigrate = $cfg->bool('auto_migrate', true);
+
+        $checker = new ReputationChecker(
+            $providers,
+            new MysqlReputationCache($mysqli, $autoMigrate),
+            $cfg->nestedInt('ip_reputation.cache_ttl', 86400),
+            $cfg->nestedInt('ip_reputation.circuit_breaker.failures', 5),
+            $cfg->nestedInt('ip_reputation.circuit_breaker.cooldown', 120),
+            new MysqlReputationQueue($mysqli, $autoMigrate),
+            true
+        );
+
+        return new ReputationWorker(
+            new MysqlReputationQueue($mysqli, $autoMigrate),
+            $checker,
+            $cfg->nestedInt('ip_reputation.queue_batch', 50),
+            $cfg->nestedInt('ip_reputation.per_run', 100),
+            $cfg->nestedInt('ip_reputation.retry_after', 300)
+        );
+    }
+
+    private static function isAsync(Config $cfg): bool
+    {
+        return strtolower($cfg->nestedString('ip_reputation.mode', 'async')) !== 'sync';
+    }
+
+    private static function reputationQueue(Config $cfg, ?\mysqli $mysqli): ReputationQueueInterface
+    {
+        return $mysqli instanceof \mysqli
+            ? new MysqlReputationQueue($mysqli, $cfg->bool('auto_migrate', true))
+            : new ArrayReputationQueue();
     }
 
     /**

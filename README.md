@@ -181,13 +181,32 @@ If you only need a boolean, call `isRequestAllowed()` with the same arguments.
 
 Both services implement the same API v2 contract (`/check`, `Key:` header, identical envelopes), so one client serves both and the checker tries them in order.
 
+The reputation layer is **asynchronous by default**: a request never waits for AbuseIPDB. A known address is answered from the cache, an unknown one is queued with a single `INSERT`, and the worker fills the cache out of band. Switch to `'mode' => 'sync'` only for low-traffic endpoints, tests or CLI tools.
+
+| Mode | Request path | When the verdict applies |
+|---|---|---|
+| `async` (default) | cache read plus at most one `INSERT` into `php_shield_reputation_queue` | from the next request after the worker has stored the answer |
+| `sync` | one HTTP call, bounded by `timeout` | immediately |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
+
 ```php
 $config['ip_reputation'] = [
     'enabled' => true,
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -205,6 +224,9 @@ php tools/live-abuseipdb.php 8.8.8.8
 Behaviour that matters in production:
 
 - answers are cached for `cache_ttl` seconds — a burst costs one query, and only public addresses are ever asked about;
+- the worker respects `per_run`, so the daily quota is spent gradually instead of in one burst;
+- a failed lookup stays queued with `retry_after` backoff — an API outage cannot spin the worker;
+- the first visit of a new address is never delayed and never blocked *because of* AbuseIPDB: the reputation layer confirms or clears it on a following request (ADR-010);
 - the first provider that answers wins; if it fails, the next one is tried;
 - `429` is never retried in-process: the advertised window is honoured for all following lookups;
 - after `circuit_breaker.failures` consecutive errors a provider is skipped for `cooldown` seconds;

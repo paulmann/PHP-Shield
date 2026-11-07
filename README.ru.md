@@ -177,9 +177,26 @@ $shield = ShieldFactory::createWithComponents(
 
 Если нужно только логическое значение, вызовите `isRequestAllowed()` с теми же аргументами.
 
-## Репутация IP: AbuseIPDB.com и AbuseIPDB.ru
+# README i18n ru — run 78725121 participant 4
+
+## IP reputation: AbuseIPDB.com and AbuseIPDB.ru
 
 Оба сервиса реализуют один и тот же контракт API v2 (`/check`, заголовок `Key:`, идентичные конверты), поэтому один клиент обслуживает оба, а проверяющий обращается к ним по очереди.
+
+Слой репутации **по умолчанию работает асинхронно**: запрос никогда не ждёт AbuseIPDB. Известный адрес берётся из кеша, неизвестный ставится в очередь одним `INSERT`, а воркер наполняет кеш вне основного потока. Переключайтесь на `'mode' => 'sync'` только для низконагруженных эндпоинтов, тестов или CLI-инструментов.
+
+| Режим | Путь запроса | Когда применяется вердикт |
+|---|---|---|
+| `async` (по умолчанию) | чтение кеша плюс не более одного `INSERT` в `php_shield_reputation_queue` | начиная со следующего запроса после того, как воркер сохранил ответ |
+| `sync` | один HTTP-вызов, ограниченный `timeout` | немедленно |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
 
 ```php
 $config['ip_reputation'] = [
@@ -187,7 +204,11 @@ $config['ip_reputation'] = [
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -204,12 +225,15 @@ php tools/live-abuseipdb.php 8.8.8.8
 
 Что важно в продакшене:
 
-- ответы кэшируются на `cache_ttl` секунд — всплеск трафика стоит одного запроса, и запрашиваются только публичные адреса;
-- выигрывает первый ответивший провайдер; если он отказал, пробуется следующий;
-- `429` никогда не повторяется внутри процесса: объявленное окно соблюдается для всех последующих обращений;
-- после `circuit_breaker.failures` ошибок подряд провайдер пропускается на `cooldown` секунд;
+- ответы кешируются на `cache_ttl` секунд — всплеск запросов стоит одного обращения, и спрашивают только о публичных адресах;
+- воркер соблюдает `per_run`, поэтому дневная квота расходуется постепенно, а не одним всплеском;
+- неудачный поиск остаётся в очереди с задержкой `retry_after` — сбой API не может раскрутить воркер;
+- первый визит нового адреса никогда не задерживается и не блокируется *из-за* AbuseIPDB: слой репутации подтверждает или снимает его на следующем запросе (ADR-010);
+- побеждает первый провайдер, который ответил; если он失敗ил, пробуется следующий;
+- `429` никогда не повторяется внутри процесса: объявленное окно соблюдается для всех последующих поисков;
+- после `circuit_breaker.failures` подряд идущих ошибок провайдер пропускается на `cooldown` секунд;
 - ответ `null`, таймаут или ошибка квоты никогда не блокируют запрос;
-- в режиме `monitor` высокий балл пишется в журнал, но не блокируется.
+- в режиме `monitor` высокий балл журналируется, но не блокируется.
 
 ## Правила обнаружения
 

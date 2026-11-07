@@ -24,6 +24,9 @@ a real deployment of this pattern.
 - [ ] `migrations/schema.sql` applied, schema drift checked (`tools/db-selftest.php`)
 - [ ] the database user of the shield has no `DROP`, `GRANT` or `FILE` privilege
 - [ ] `DatabaseRateLimiter::prune()` and `cleanup()` are scheduled
+- [ ] `tools/reputation-worker.php` runs from cron every minute when `ip_reputation.enabled` is true
+  (async mode); `--status` shows the queue size
+- [ ] The reputation queue is drained: `SELECT COUNT(*) FROM php_shield_reputation_queue` stays small
 
 ## 4. Concurrency
 

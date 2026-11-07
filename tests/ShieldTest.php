@@ -12,7 +12,9 @@ use Deynekin\PhpShield\Tests\Support\FakeRateLimiter;
 use Deynekin\PhpShield\Tests\Support\InMemoryBlockStore;
 use Deynekin\PhpShield\ThreatIntel\AbuseIpDbProvider;
 use Deynekin\PhpShield\ThreatIntel\ArrayReputationCache;
+use Deynekin\PhpShield\ThreatIntel\ArrayReputationQueue;
 use Deynekin\PhpShield\ThreatIntel\ReputationChecker;
+use Deynekin\PhpShield\ThreatIntel\ReputationWorker;
 use PHPUnit\Framework\TestCase;
 
 class ShieldTest extends TestCase
@@ -312,6 +314,53 @@ class ShieldTest extends TestCase
             'scan_request_uri' => true,
             'ip_reputation' => ['block_score' => 75, 'flag_score' => 25],
         ], $overrides);
+    }
+
+    public function testAsyncReputationDoesNotTouchTheNetwork(): void
+    {
+        $transport = new \Deynekin\PhpShield\Tests\Support\FakeTransport();
+        $queue = new ArrayReputationQueue();
+        $checker = new ReputationChecker(
+            [new AbuseIpDbProvider($transport, 'test-key')],
+            new ArrayReputationCache(),
+            86400,
+            5,
+            120,
+            $queue,
+            true
+        );
+
+        $decision = $this->shield([], $checker)->inspect([], ['REMOTE_ADDR' => '203.0.113.5']);
+
+        $this->assertFalse($decision['blocked']);
+        $this->assertSame([], $transport->requests);
+        $this->assertSame(1, $queue->size());
+        $this->assertSame([], $this->store->incidents);
+    }
+
+    public function testAsyncReputationBlocksOnceTheWorkerFilledTheCache(): void
+    {
+        $transport = (new \Deynekin\PhpShield\Tests\Support\FakeTransport())
+            ->respond(200, $this->reputationResponse(95));
+        $queue = new ArrayReputationQueue();
+        $checker = new ReputationChecker(
+            [new AbuseIpDbProvider($transport, 'test-key')],
+            new ArrayReputationCache(),
+            86400,
+            5,
+            120,
+            $queue,
+            true
+        );
+
+        $queue->push('203.0.113.5');
+        (new ReputationWorker($queue, $checker))->drain();
+
+        $decision = $this->shield([], $checker)->inspect([], ['REMOTE_ADDR' => '203.0.113.5']);
+
+        $this->assertTrue($decision['blocked']);
+        $this->assertSame('ip_reputation', $decision['reason']);
+        $this->assertCount(1, $transport->requests, 'only the worker talks to the API');
     }
 
     private function reputationChecker(string $body): ReputationChecker

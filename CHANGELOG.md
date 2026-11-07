@@ -19,6 +19,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follo
 - Vulnerability reports go through GitHub private reporting; the personal e-mail address was removed from `SECURITY.md` and `CONTRIBUTING.md`.
 - `AGENTS.md` points at the wiki and the shared rule map instead of repeating the reference tables.
 
+## [2.1.0] - 2026-11-08
+
+### Added
+
+- **Asynchronous reputation by default.** The request path no longer calls AbuseIPDB: a known address
+  is answered from the cache, an unknown one is queued (`php_shield_reputation_queue`) and the worker
+  fills the cache out of band. `ip_reputation.mode` switches back to `sync` at any time.
+- `tools/reputation-worker.php` — cron entry point with `--status`, `--ip=<address>` and `--limit=N`.
+- `ThreatIntel\ReputationQueueInterface` with `MysqlReputationQueue` and `ArrayReputationQueue`,
+  `ThreatIntel\ReputationWorker` with `per_run` quota guard and `retry_after` backoff,
+  `ReputationChecker::fetchOrThrow()` for the worker and `queueSize()` for monitoring.
+- `ShieldFactory::createReputationWorker()`; `ip_reputation.queue_batch` / `per_run` / `retry_after`.
+- New table `php_shield_reputation_queue`; `migrations/schema.sql` updated.
+- Tests: 134 (queue deduplication, drain, backoff, quota budget, async request path, sync switch);
+  the database self-test now covers the queue against real MySQL (28 checks).
+- ADR-010 documenting the async decision and the alternatives that were rejected.
+
+### Changed
+
+- `ReputationChecker::lookup()` is cache-only in async mode; the network call moved to `fetch()` /
+  `fetchOrThrow()`. Manual construction stays synchronous, `ShieldFactory` enables async from config.
+- The worker keeps a failed address queued instead of dropping it, so a provider outage retries later.
+
 ## [2.0.0] - 2026-11-07
 
 The rebranded release: the project formerly shipped as *SecurityMiddleware* is now **PHP Shield**.
@@ -84,7 +107,8 @@ The rebranded release: the project formerly shipped as *SecurityMiddleware* is n
 
 - Initial modular release: detection rules, score-based blocking, modes, safe IP resolution, admin dashboard, payload redaction.
 
-[Unreleased]: https://github.com/paulmann/PHP-Shield/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/paulmann/PHP-Shield/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/paulmann/PHP-Shield/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/paulmann/PHP-Shield/releases/tag/v2.0.0
 [1.1.0]: https://github.com/paulmann/PHP-Shield/releases
 [1.0.0]: https://github.com/paulmann/PHP-Shield/releases

@@ -18,6 +18,7 @@ use Deynekin\PhpShield\RateLimiting\DatabaseRateLimiter;
 use Deynekin\PhpShield\Storage\MysqlBlockStore;
 use Deynekin\PhpShield\ThreatIntel\IpReputation;
 use Deynekin\PhpShield\ThreatIntel\MysqlReputationCache;
+use Deynekin\PhpShield\ThreatIntel\MysqlReputationQueue;
 
 if (!extension_loaded('mysqli')) {
     fwrite(STDERR, "mysqli is not loaded: run with -d extension=php_mysqli\n");
@@ -138,6 +139,22 @@ $cached = $cache->get('selftest:reputation');
 check('reputation cache round-trip', is_array($cached) ? ($cached['score'] ?? null) : null, 88);
 check('reputation rebuild', IpReputation::fromArray(is_array($cached) ? $cached : [])?->isp, 'Selftest ISP');
 
+// Reputation queue (async mode) ---------------------------------------------
+$queue = new MysqlReputationQueue($mysqli);
+$queue->complete($ip);
+$queue->push($ip);
+check('queue accepts an address', $queue->size(), 1);
+$queue->push($ip);
+check('queue deduplicates', $queue->size(), 1);
+check('queue claims the address', in_array($ip, $queue->claim(5), true), true);
+$queue->fail($ip, 'selftest failure', 60);
+check('failed address stays queued', $queue->size(), 1);
+check('failed address is not due yet', in_array($ip, $queue->claim(5), true), false);
+$mysqli->query("UPDATE php_shield_reputation_queue SET next_attempt_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE ip_address = '{$ip}'");
+check('backoff expires', in_array($ip, $queue->claim(5), true), true);
+$queue->complete($ip);
+check('completed address leaves the queue', $queue->size(), 0);
+
 // Cleanup ------------------------------------------------------------------
 $cleanup = $store->cleanup(30);
 check('cleanup returns counters', array_keys($cleanup), ['blocks', 'incidents', 'attempts']);
@@ -149,9 +166,9 @@ while (is_array($row = $result->fetch_array(MYSQLI_NUM))) {
 }
 
 check('all tables present', count(array_intersect(
-    ['php_shield_ip_blocks', 'php_shield_incidents', 'php_shield_failed_attempts', 'php_shield_rate_limit', 'php_shield_ip_reputation'],
+    ['php_shield_ip_blocks', 'php_shield_incidents', 'php_shield_failed_attempts', 'php_shield_rate_limit', 'php_shield_ip_reputation', 'php_shield_reputation_queue'],
     $tables
-)), 5);
+)), 6);
 
 $mysqli->close();
 

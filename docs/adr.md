@@ -78,6 +78,30 @@
 
 **Consequences**: a burst costs one query, a broken provider costs nothing, and the shield keeps its latency budget (2 s timeout by default).
 
+## ADR-010: Reputation Is Asynchronous by Default
+
+**Status**: Accepted
+
+**Context**: `/check` is an external HTTP call. Even with a 2-second timeout and a cache, calling it inline
+puts a third-party service inside the request path: a slow provider, a DNS hiccup or a quota window
+becomes latency for a visitor, and on a busy site it becomes a queue of blocked PHP workers.
+
+**Decision**: `ip_reputation.mode = 'async'` by default. `ReputationChecker::lookup()` answers from the
+cache and, on a miss, only enqueues the address (`php_shield_reputation_queue`, one `INSERT ... ON
+DUPLICATE KEY UPDATE`). A cron worker (`tools/reputation-worker.php`) drains the queue, respects
+`per_run`, stores the answer in `php_shield_ip_reputation` and retries failures with `retry_after`
+backoff. `'sync'` remains available and performs the call inline.
+
+**Consequences**: no request ever waits for AbuseIPDB, and the reputation verdict for a brand-new address
+applies from the next request instead of the current one. That is acceptable because reputation is an
+*addition* to the local rules: the first request is still inspected and rate limited by them. The
+worker's failure mode is benign — if it does not run, the queue grows and the shield keeps working.
+
+**Alternatives rejected**: (a) blocking call with a short timeout — still a third-party dependency in
+the request path; (b) fire-and-forget from PHP-FPM after `fastcgi_finish_request()` — not portable to
+CLI/other SAPIs and loses the request when the worker dies; (c) an in-process queue — nothing survives
+the request that filled it.
+
 ## ADR-009: Time Comes From the Database
 
 **Status**: Accepted

@@ -68,6 +68,7 @@ DELETE FROM php_shield_ip_reputation    WHERE expires_at <= NOW();
 | `php_shield_ip_blocks` | temporary and permanent blocks, with `severity`, `reason` and `expires_at` |
 | `php_shield_incidents` | the journal: type, severity, description, JSON context, address, user id |
 | `php_shield_failed_attempts` | counters per address with the last attempt time |
+| `php_shield_reputation_queue` | addresses waiting for an AbuseIPDB lookup (async mode), with attempts and `next_attempt_at` |
 | `php_shield_rate_limit` | the database limiter's counters |
 | `php_shield_ip_reputation` | cached reputation answers with their expiry |
 

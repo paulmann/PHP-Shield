@@ -177,9 +177,26 @@ $shield = ShieldFactory::createWithComponents(
 
 如果只需要一个布尔结果，可以用相同的参数调用 `isRequestAllowed()`。
 
-## IP 信誉数据源 AbuseIPDB.com 与 AbuseIPDB.ru
+# README i18n zh — run 78725121 participant 2
 
-两个服务实现相同的 API v2 约定（`/check`、`Key:` 请求头、完全一致的响应信封），因此一个客户端即可同时对接两者，检查器会按顺序依次尝试。
+## IP 信誉：AbuseIPDB.com 和 AbuseIPDB.ru
+
+这两个服务实现同一套 API v2 约定（`/check`、`Key:` 头、相同的响应封装），因此一个客户端即可同时服务两者，检查器会依次尝试它们。
+
+信誉层**默认是异步的**：请求永远不会等待 AbuseIPDB。已知地址直接从缓存得到答复，未知地址通过单条 `INSERT` 进入队列，而由 worker 在带外填充缓存。只有低流量端点、测试或 CLI 工具才切换到 `'mode' => 'sync'`。
+
+| 模式 | 请求路径 | 判定生效时机 |
+|---|---|---|
+| `async`（默认） | 读取缓存，最多向 `php_shield_reputation_queue` 执行一条 `INSERT` | 从 worker 存入答复之后的下一个请求起 |
+| `sync` | 一次 HTTP 调用，受 `timeout` 限制 | 立即生效 |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
 
 ```php
 $config['ip_reputation'] = [
@@ -187,7 +204,11 @@ $config['ip_reputation'] = [
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -202,14 +223,17 @@ export ABUSEIPDB_API_KEY=[redacted]          # or put the key in the config, nev
 php tools/live-abuseipdb.php 8.8.8.8
 ```
 
-生产环境中需要关注的行为：
+生产环境中真正要紧的行为：
 
-- 结果会缓存 `cache_ttl` 秒——一阵突发流量只消耗一次查询，并且只会对公网地址发起查询；
-- 第一个返回结果的提供商胜出；如果它失败，则尝试下一个；
-- `429` 不会在进程内重试：后续所有查询都会遵守对方声明的窗口期；
-- 连续出现 `circuit_breaker.failures` 次错误后，该提供商会在 `cooldown` 秒内被跳过；
-- `null` 结果、超时或配额错误都不会导致请求被拦截；
-- 在 `monitor` 模式下，高分会写入日志，但不会封禁。
+- 答复会按 `cache_ttl` 秒缓存——一次突发流量只消耗一次查询，并且只会查询公网地址；
+- worker 遵守 `per_run`，因此每日配额是被逐渐消耗，而不是一次突发用尽；
+- 查询失败的地址会带着 `retry_after` 退避继续留在队列中——API 故障不会让 worker 空转；
+- 新地址的首次访问从不会被延迟，也从不会*因为* AbuseIPDB 而被阻断：信誉层会在后续请求中确认或解除它（ADR-010）；
+- 第一个给出答复的提供方即胜出；若它失败，则尝试下一个；
+- `429` 从不在进程内重试：会针对后续所有查询遵守通告的时间窗口；
+- 在连续出现 `circuit_breaker.failures` 次错误之后，该提供方会被跳过 `cooldown` 秒；
+- `null` 答复、超时或配额错误从不会阻断请求；
+- 在 `monitor` 模式下，高分只被记录，不会阻断。
 
 ## 检测规则
 

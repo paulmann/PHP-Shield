@@ -177,9 +177,26 @@ El orden de las comprobaciones es fijo e intencional: interruptor maestro → di
 
 Si solo se necesita un valor booleano, basta con llamar a `isRequestAllowed()` con los mismos argumentos.
 
-## Reputación de IP: AbuseIPDB.com y AbuseIPDB.ru
+# README i18n es — run 78725121 participant 1
 
-Ambos servicios implementan el mismo contrato de API v2 (`/check`, encabezado `Key:`, envoltorios idénticos), así que un solo cliente sirve para los dos y el verificador los prueba en orden.
+## IP reputation: AbuseIPDB.com and AbuseIPDB.ru
+
+Ambos servicios implementan el mismo contrato de API v2 (`/check`, cabecera `Key:`, envoltorios idénticos), así que un solo cliente sirve para ambos y el verificador los prueba en orden.
+
+La capa de reputación es **asíncrona por defecto**: una petición nunca espera a AbuseIPDB. Una dirección conocida se responde desde la caché, una desconocida se encola con un único `INSERT`, y el worker rellena la caché fuera de banda. Cambie a `'mode' => 'sync'` solo para endpoints de bajo tráfico, pruebas o herramientas CLI.
+
+| Modo | Ruta de la petición | Cuándo se aplica el veredicto |
+|---|---|---|
+| `async` (predeterminado) | lectura de caché más como máximo un `INSERT` en `php_shield_reputation_queue` | a partir de la siguiente petición, una vez que el worker ha almacenado la respuesta |
+| `sync` | una llamada HTTP, acotada por `timeout` | de inmediato |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
 
 ```php
 $config['ip_reputation'] = [
@@ -187,7 +204,11 @@ $config['ip_reputation'] = [
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -204,12 +225,15 @@ php tools/live-abuseipdb.php 8.8.8.8
 
 Comportamiento que importa en producción:
 
-- las respuestas se guardan en caché durante `cache_ttl` segundos: una ráfaga cuesta una sola consulta y únicamente se consultan direcciones públicas;
+- las respuestas se cachean durante `cache_ttl` segundos — una ráfaga cuesta una sola consulta, y solo se pregunta por direcciones públicas;
+- el worker respeta `per_run`, así que la cuota diaria se gasta gradualmente en lugar de en una sola ráfaga;
+- una consulta fallida permanece en cola con el retroceso `retry_after` — una caída de la API no puede hacer girar el worker;
+- la primera visita de una dirección nueva nunca se retrasa y nunca se bloquea *a causa de* AbuseIPDB: la capa de reputación la confirma o la descarta en una petición posterior (ADR-010);
 - gana el primer proveedor que responde; si falla, se prueba el siguiente;
-- `429` nunca se reintenta dentro del proceso: la ventana anunciada se respeta para todas las consultas posteriores;
+- `429` nunca se reintenta dentro del proceso: la ventana anunciada se respeta para todas las consultas siguientes;
 - tras `circuit_breaker.failures` errores consecutivos, un proveedor se omite durante `cooldown` segundos;
-- una respuesta `null`, un tiempo de espera agotado o un error de cuota nunca bloquean una solicitud;
-- en modo `monitor`, una puntuación alta se registra pero no se bloquea.
+- una respuesta `null`, un timeout o un error de cuota nunca bloquean una petición;
+- en modo `monitor` una puntuación alta se registra en el journal pero no se bloquea.
 
 ## Reglas de detección
 

@@ -177,9 +177,26 @@ Die Reihenfolge der Prüfungen ist fest und bewusst gewählt: Hauptschalter → 
 
 Wenn Sie lediglich einen booleschen Wert benötigen, rufen Sie `isRequestAllowed()` mit denselben Argumenten auf.
 
-## IP-Reputation: AbuseIPDB.com und AbuseIPDB.ru
+# README i18n de/es/zh/hi/ru — run 78725121 participant 0
 
-Beide Dienste implementieren denselben Vertrag von API v2 (`/check`, Header `Key:`, identische Envelopes). Daher bedient ein Client beide, und der Checker probiert sie der Reihe nach durch.
+## IP reputation: AbuseIPDB.com and AbuseIPDB.ru
+
+Beide Dienste implementieren denselben API-v2-Vertrag (`/check`, `Key:`-Header, identische Envelopes), daher bedient ein Client beide, und der Checker probiert sie der Reihe nach aus.
+
+Die Reputationsebene ist **standardmäßig asynchron**: Eine Anfrage wartet nie auf AbuseIPDB. Eine bekannte Adresse wird aus dem Cache beantwortet, eine unbekannte mit einem einzigen `INSERT` in die Warteschlange gestellt, und der Worker füllt den Cache außerhalb des Anforderungspfades. Wechseln Sie nur bei Endpunkten mit geringem Verkehr, bei Tests oder CLI-Werkzeugen zu `'mode' => 'sync'`.
+
+| Modus | Anforderungspfad | Wann das Urteil greift |
+|---|---|---|
+| `async` (Standard) | Cache-Lesevorgang plus höchstens ein `INSERT` in `php_shield_reputation_queue` | ab der nächsten Anfrage, nachdem der Worker die Antwort gespeichert hat |
+| `sync` | ein HTTP-Aufruf, begrenzt durch `timeout` | sofort |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
 
 ```php
 $config['ip_reputation'] = [
@@ -187,7 +204,11 @@ $config['ip_reputation'] = [
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -202,14 +223,17 @@ export ABUSEIPDB_API_KEY=[redacted]          # or put the key in the config, nev
 php tools/live-abuseipdb.php 8.8.8.8
 ```
 
-Verhalten, das im Produktivbetrieb zählt:
+Verhalten, das in der Produktion zählt:
 
-- Antworten werden für `cache_ttl` Sekunden zwischengespeichert — eine Lastspitze kostet eine einzige Abfrage, und es werden ausschließlich öffentliche Adressen abgefragt;
-- der erste Anbieter, der antwortet, gewinnt; schlägt er fehl, wird der nächste probiert;
-- `429` wird nie innerhalb desselben Prozesses erneut versucht: das mitgeteilte Zeitfenster wird für alle folgenden Abfragen eingehalten;
-- nach `circuit_breaker.failures` aufeinanderfolgenden Fehlern wird ein Anbieter für `cooldown` Sekunden übersprungen;
-- eine `null`-Antwort, ein Timeout oder ein Quota-Fehler sperren niemals eine Anfrage;
-- im Modus `monitor` wird ein hoher Score protokolliert, aber nicht gesperrt.
+- Antworten werden für `cache_ttl` Sekunden zwischengespeichert — ein Burst kostet eine Abfrage, und es wird ausschließlich zu öffentlichen Adressen angefragt;
+- der Worker beachtet `per_run`, sodass das Tageskontingent schrittweise statt in einem einzigen Schub verbraucht wird;
+- eine fehlgeschlagene Abfrage bleibt mit `retry_after`-Backoff in der Warteschlange — ein API-Ausfall kann den Worker nicht in eine Endlosschleife treiben;
+- der Erstbesuch einer neuen Adresse wird nie verzögert und nie *wegen* AbuseIPDB blockiert: Die Reputationsebene bestätigt oder entlastet ihn bei einer folgenden Anfrage (ADR-010);
+- der erste Provider, der antwortet, gewinnt; schlägt er fehl, wird der nächste versucht;
+- `429` wird nie im laufenden Prozess wiederholt: Das angegebene Zeitfenster wird für alle folgenden Abfragen eingehalten;
+- nach `circuit_breaker.failures` aufeinanderfolgenden Fehlern wird ein Provider für `cooldown` Sekunden übersprungen;
+- eine `null`-Antwort, ein Timeout oder ein Kontingentfehler blockiert nie eine Anfrage;
+- im `monitor`-Modus wird ein hoher Score protokolliert, aber nicht blockiert.
 
 ## Erkennungsregeln
 

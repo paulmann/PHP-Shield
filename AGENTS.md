@@ -48,6 +48,13 @@ if ($decision['blocked']) {
 storage; `Middleware\SecurityMiddleware` owns state (blocks, incidents, counters) and must not
 detect. That split is ADR-005 — do not blur it.
 
+## Rule 6 — no network on the request path
+
+IP reputation is asynchronous by default (`ip_reputation.mode = 'async'`). `ReputationChecker::lookup()`
+reads the cache and enqueues a miss; only the worker (`tools/reputation-worker.php`) and the explicit
+`fetch()` / `fetchOrThrow()` calls are allowed to perform HTTP (ADR-010). Adding a blocking API call to
+`Shield::inspect()` is a regression: a slow provider would become visitor latency.
+
 ## Adding a detection rule
 
 1. New class in `src/Detection/` extending `AbstractRule`.

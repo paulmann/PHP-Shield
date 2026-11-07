@@ -85,13 +85,25 @@ return [
     // (same paths, same `Key:` header, same envelopes), so both are listed as
     // providers and the checker tries them in order. Keys are read from the
     // environment when api_key is left empty — never commit a real key.
+    //
+    // mode:
+    //   'async' (default) — the request path never calls the API: a known
+    //     address is answered from the cache, an unknown one is queued and the
+    //     worker (tools/reputation-worker.php, cron every minute) fills the
+    //     cache. Nothing on the request path can be delayed by AbuseIPDB.
+    //   'sync' — the lookup happens inline, bounded by `timeout`. Only for
+    //     low-traffic endpoints or CLI tools.
     'ip_reputation' => [
         'enabled' => false,
+        'mode' => 'async',
         'block_score' => 75, // abuseConfidenceScore that blocks
         'flag_score' => 25,  // score that is only journaled
         'cache_ttl' => 86400,
         'max_age_days' => 90,
         'timeout' => 2,
+        'queue_batch' => 50, // addresses claimed per worker run
+        'per_run' => 100,    // lookups per worker run (quota guard)
+        'retry_after' => 300, // retry delay for a failed lookup
         'circuit_breaker' => [
             'failures' => 5,
             'cooldown' => 120

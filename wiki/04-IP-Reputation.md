@@ -4,16 +4,54 @@ Both services speak the same API v2 contract — `/check`, the `Key:` header, th
 the library ships one client, `ThreatIntel\AbuseIpDbProvider`, parameterised by base URL, and
 `ReputationChecker` tries the configured providers in order.
 
+## Asynchronous by default
+
+The reputation layer never sits in the request path. `Shield::inspect()` reads the cache and, on a
+miss, writes one row into `php_shield_reputation_queue`; the answer is fetched by a worker that runs
+from cron. Switch to `'mode' => 'sync'` only for low-traffic endpoints, tests and CLI tools.
+
+| Mode | Request path | When the verdict applies |
+|---|---|---|
+| `async` (default) | cache read + at most one `INSERT` | from the next request after the worker stored the answer |
+| `sync` | one HTTP call bounded by `timeout` | immediately |
+
+```bash
+# every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status       # queue size, providers, mode
+php tools/reputation-worker.php --ip=8.8.8.8   # one address now (debugging)
+```
+
+The worker prints one line, suitable for a log:
+
+```
+processed=2 fetched=2 empty=0 failed=0 skipped=0 queued=0
+```
+
+Consequences worth knowing:
+
+- the first visit of a new address is never delayed and never blocked *because of* AbuseIPDB — the
+  score is confirmed or cleared on a following request;
+- `per_run` caps the calls per worker run, so the daily quota is spent gradually;
+- a failed lookup stays in the queue with `retry_after` backoff instead of being dropped;
+- if the worker does not run, nothing breaks: the shield keeps working with the local rules and the
+  queue simply grows.
+
 ## Configuration
 
 ```php
 $config['ip_reputation'] = [
     'enabled' => true,
+    'mode' => 'async', // async (default) | sync
     'block_score' => 75,
     'flag_score' => 25,
     'cache_ttl' => 86400,
     'max_age_days' => 90,
-    'timeout' => 2,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'circuit_breaker' => ['failures' => 5, 'cooldown' => 120],
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
@@ -41,6 +79,9 @@ In `monitor` mode a high score is journaled and the request still passes.
 ## Operational guarantees
 
 - **Cache first.** A hit costs no network and is shared through `php_shield_ip_reputation`.
+- **The request path never calls the API** in `async` mode: it queues the address and moves on.
+- **Backoff on failure.** A lookup that could not be answered stays queued with `retry_after`
+  seconds, so an outage cannot spin the worker or burn the quota.
 - **Private addresses are never queried.** Loopback, RFC 1918, CGNAT and link-local ranges are
   skipped: a local address has no public reputation.
 - **Provider fallback.** A failing provider passes the question to the next one; the answer records

@@ -177,9 +177,26 @@ $shield = ShieldFactory::createWithComponents(
 
 अगर सिर्फ़ boolean चाहिए, तो वही आर्ग्युमेंट देकर `isRequestAllowed()` कॉल कीजिए।
 
-## IP प्रतिष्ठा: AbuseIPDB.com और AbuseIPDB.ru
+# README i18n hi — run 78725121 participant 3
 
-दोनों सेवाएँ एक ही API v2 कॉन्ट्रैक्ट लागू करती हैं (`/check`, `Key:` हेडर, एक जैसे एनवेलप), इसलिए एक ही क्लाइंट दोनों के लिए काम करता है और चेकर उन्हें क्रम से आज़माता है।
+## IP reputation: AbuseIPDB.com and AbuseIPDB.ru
+
+दोनों सेवाएँ एक ही API v2 contract (`/check`, `Key:` header, समान envelopes) लागू करती हैं, इसलिए एक ही client दोनों के लिए पर्याप्त है और checker उन्हें क्रम से आज़माता है।
+
+Reputation परत **डिफ़ॉल्ट रूप से asynchronous** है: कोई भी request AbuseIPDB की प्रतीक्षा कभी नहीं करता। ज्ञात पता cache से उत्तर पाता है, अज्ञात पता एक ही `INSERT` के साथ queue में चला जाता है, और worker cache को पृष्ठभूमि में भर देता है। `'mode' => 'sync'` पर केवल कम-ट्रैफ़िक endpoints, tests या CLI tools के लिए जाएँ।
+
+| मोड | अनुरोध पथ | निर्णय कब लागू होता है |
+|---|---|---|
+| `async` (डिफ़ॉल्ट) | cache read तथा अधिकतम एक `INSERT` `php_shield_reputation_queue` में | worker द्वारा उत्तर संग्रहीत करने के बाद अगले request से |
+| `sync` | एक HTTP call, `timeout` द्वारा सीमित | तत्काल |
+
+```bash
+# cron: fill the reputation cache every minute
+* * * * * php /path/to/PHP-Shield/tools/reputation-worker.php >> /var/log/php-shield-reputation.log 2>&1
+
+php tools/reputation-worker.php --status         # queue size and providers
+php tools/reputation-worker.php --ip=8.8.8.8     # one address now (debugging)
+```
 
 ```php
 $config['ip_reputation'] = [
@@ -187,7 +204,11 @@ $config['ip_reputation'] = [
     'block_score' => 75,   // abuseConfidenceScore that blocks
     'flag_score' => 25,    // score that is only journaled
     'cache_ttl' => 86400,
-    'timeout' => 2,
+    'max_age_days' => 90,
+    'timeout' => 2,        // sync mode only
+    'queue_batch' => 50,   // addresses claimed per worker run
+    'per_run' => 100,      // lookups per worker run (quota guard)
+    'retry_after' => 300,  // retry delay after a failed lookup
     'providers' => [
         ['name' => 'abuseipdb.com', 'base_url' => 'https://api.abuseipdb.com/api/v2',
          'api_key' => null, 'api_key_env' => 'ABUSEIPDB_API_KEY'],
@@ -202,14 +223,17 @@ export ABUSEIPDB_API_KEY=[redacted]          # or put the key in the config, nev
 php tools/live-abuseipdb.php 8.8.8.8
 ```
 
-प्रोडक्शन में मायने रखने वाला व्यवहार:
+प्रोडक्शन में महत्वपूर्ण व्यवहार:
 
-- जवाब `cache_ttl` सेकंड तक कैश रहते हैं — एक बर्स्ट में सिर्फ़ एक क्वेरी लगती है, और सिर्फ़ पब्लिक पतों के बारे में ही पूछा जाता है;
-- जो प्रोवाइडर पहले जवाब देता है वही जीतता है; वह फेल हो तो अगला आज़माया जाता है;
-- `429` को प्रोसेस के भीतर कभी दोबारा नहीं आज़माया जाता: बताई गई विंडो आगे की सभी लुकअप के लिए मानी जाती है;
-- `circuit_breaker.failures` लगातार त्रुटियों के बाद प्रोवाइडर को `cooldown` सेकंड के लिए छोड़ दिया जाता है;
-- `null` जवाब, टाइमआउट या कोटा त्रुटि कभी रिक्वेस्ट ब्लॉक नहीं करती;
-- `monitor` मोड में ऊँचा स्कोर जर्नल में दर्ज होता है, ब्लॉक नहीं होता।
+- उत्तर `cache_ttl` सेकंड तक cache किए जाते हैं — एक burst पर केवल एक query खर्च होती है, और केवल public पतों के बारे में ही पूछा जाता है;
+- worker `per_run` का पालन करता है, इसलिए दैनिक quota एक ही burst में खर्च होने के बजाय धीरे-धीरे खर्च होता है;
+- असफल lookup `retry_after` backoff के साथ queue में बना रहता है — API बंद होने पर worker chक्कर नहीं खाता;
+- किसी नए पते की पहली visit न कभी विलंबित होती है और न ही AbuseIPDB *के कारण* block होती है: reputation परत अगले request पर उसे confirm या clear करती है (ADR-010);
+- जो पहला provider उत्तर देता है वही जीतता है; वह विफल हो तो अगला आज़माया जाता है;
+- `429` को कभी in-process retry नहीं किया जाता: घोषित window का पालन आगे के सभी lookups के लिए होता है;
+- `circuit_breaker.failures` लगातार त्रुटियों के बाद कोई provider `cooldown` सेकंड के लिए छोड़ दिया जाता है;
+- `null` उत्तर, timeout या quota त्रुटि कभी किसी request को block नहीं करती;
+- `monitor` मोड में उच्च score journal होता है, block नहीं होता।
 
 ## डिटेक्शन नियम
 

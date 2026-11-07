@@ -10,23 +10,28 @@ use Throwable;
 /**
  * Turns one or more providers into a single "is this address known bad?" answer.
  *
- * Design rules (taken from the production checklist of the abuseipdb.ru
- * project, where a reputation lookup must never hurt an honest visitor):
+ * Two modes, both safe on the request path:
  *
- *   - answers are cached for `cacheTtl` seconds, so a burst costs one query;
- *   - providers are tried in order: abuseipdb.com first, abuseipdb.ru as the
- *     fallback (or the other way round) — one outage does not blind the site;
- *   - a provider that fails `breakerFailures` times in a row is skipped for
- *     `breakerCooldown` seconds;
- *   - `429` is never retried in-process: the advertised retry window is
- *     honoured for every following lookup;
- *   - any failure means "no data", never "block": the shield keeps working with
- *     its local rules.
+ *   - **async (default)** — `lookup()` never talks to the network. It answers
+ *     from the cache and, on a miss, pushes the address into the queue for the
+ *     worker (`tools/reputation-worker.php`, run from cron). The verdict for a
+ *     new address therefore arrives with a later request, which is why the
+ *     reputation layer is an addition to the local rules and not a blocker for
+ *     the first visit.
+ *   - **sync** — `lookup()` performs the call inline (bounded by `timeout`).
+ *     Use it only for low-traffic endpoints or CLI tools.
+ *
+ * In both modes: answers are cached for `cacheTtl`; providers are tried in
+ * order; `429` opens the advertised window; after `breakerFailures` consecutive
+ * errors a provider is skipped for `breakerCooldown`; any failure means "no
+ * data", never "block".
  */
 final class ReputationChecker
 {
     private const CACHE_PREFIX = 'reputation:';
+
     private const BREAKER_PREFIX = 'breaker:';
+
     private const RATE_LIMIT_PREFIX = 'ratelimit:';
 
     /**
@@ -37,13 +42,20 @@ final class ReputationChecker
         private readonly ReputationCacheInterface $cache,
         private readonly int $cacheTtl = 86400,
         private readonly int $breakerFailures = 5,
-        private readonly int $breakerCooldown = 120
+        private readonly int $breakerCooldown = 120,
+        private readonly ?ReputationQueueInterface $queue = null,
+        private readonly bool $async = false
     ) {
     }
 
     public function isEnabled(): bool
     {
         return $this->providers !== [];
+    }
+
+    public function isAsync(): bool
+    {
+        return $this->async;
     }
 
     /**
@@ -60,24 +72,75 @@ final class ReputationChecker
         return $names;
     }
 
+    /**
+     * Answer for the request path. Never performs a network call in async mode.
+     */
     public function lookup(string $ip): ?IpReputation
     {
-        if ($this->providers === [] || filter_var($ip, FILTER_VALIDATE_IP) === false) {
+        if (!$this->isEnabled() || filter_var($ip, FILTER_VALIDATE_IP) === false) {
             return null;
         }
 
+        $cached = $this->cachedAnswer($ip);
+
+        if ($cached instanceof IpReputation) {
+            return $cached;
+        }
+
+        if ($this->async) {
+            $this->queue?->push($ip);
+
+            return null;
+        }
+
+        return $this->fetch($ip);
+    }
+
+    /**
+     * Ask the providers now and store the answer.
+     *
+     * Provider errors are swallowed: this is the method the request path uses
+     * in sync mode, and a broken provider must never break a visitor.
+     */
+    public function fetch(string $ip): ?IpReputation
+    {
+        try {
+            return $this->fetchOrThrow($ip);
+        } catch (Throwable $exception) {
+            return null;
+        }
+    }
+
+    /**
+     * Like fetch(), but a provider failure is reported to the caller.
+     *
+     * The worker uses this variant to decide between "no opinion" (drop the
+     * address) and "could not ask" (keep it for a retry with backoff).
+     *
+     * @throws ThreatIntelException
+     */
+    public function fetchOrThrow(string $ip): ?IpReputation
+    {
+        if (!$this->isEnabled() || filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return null;
+        }
+
+        $cached = $this->cachedAnswer($ip);
+
+        if ($cached instanceof IpReputation) {
+            return $cached;
+        }
+
         $now = time();
+        $failure = null;
+        $coolingDown = false;
 
         foreach ($this->providers as $provider) {
             $name = $provider->name();
 
-            $cached = $this->fromCache($name, $ip);
-
-            if ($cached instanceof IpReputation) {
-                return $cached;
-            }
-
             if ($this->breakerOpenUntil($name) > $now || $this->rateLimitedUntil($name) > $now) {
+                $coolingDown = true;
+
                 continue;
             }
 
@@ -85,11 +148,13 @@ final class ReputationChecker
                 $reputation = $provider->lookup($ip);
             } catch (ThreatIntelException $exception) {
                 $this->registerFailure($name, $exception, $now);
+                $failure ??= $exception;
 
                 continue;
             } catch (Throwable $exception) {
-                // A provider must never break the request path.
+                // A provider must never break the caller; keep it for a retry.
                 error_log('PHP-Shield reputation provider "' . $name . '": ' . $exception->getMessage());
+                $failure ??= ThreatIntelException::unavailable($name, $exception->getMessage());
 
                 continue;
             }
@@ -105,18 +170,44 @@ final class ReputationChecker
             return $reputation;
         }
 
+        if ($failure instanceof ThreatIntelException) {
+            throw $failure;
+        }
+
+        if ($coolingDown) {
+            throw ThreatIntelException::unavailable('reputation', 'every provider is cooling down after failures');
+        }
+
         return null;
     }
 
-    private function fromCache(string $provider, string $ip): ?IpReputation
+    public function queueSize(): int
     {
-        $cached = $this->cache->get(self::CACHE_PREFIX . $provider . ':' . $ip);
+        return $this->queue?->size() ?? 0;
+    }
 
-        if (!is_array($cached)) {
-            return null;
+    public function queue(): ?ReputationQueueInterface
+    {
+        return $this->queue;
+    }
+
+    private function cachedAnswer(string $ip): ?IpReputation
+    {
+        foreach ($this->providers as $provider) {
+            $cached = $this->cache->get(self::CACHE_PREFIX . $provider->name() . ':' . $ip);
+
+            if (!is_array($cached)) {
+                continue;
+            }
+
+            $reputation = IpReputation::fromArray($cached);
+
+            if ($reputation instanceof IpReputation) {
+                return $reputation;
+            }
         }
 
-        return IpReputation::fromArray($cached);
+        return null;
     }
 
     private function cache(string $provider, IpReputation $reputation): void
