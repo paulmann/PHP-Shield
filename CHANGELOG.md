@@ -11,6 +11,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follo
 - A wiki under `wiki/`: sixteen pages covering configuration, detection, reputation, storage, rate limiting, the dashboard, reverse proxies, deployment, troubleshooting and the upgrade path. Built and published with `ghagent wiki`.
 - Repository hygiene: `.gitattributes`, `.editorconfig`, issue forms, a pull-request template, `CODEOWNERS`, Dependabot, `SUPPORT.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff`.
 - A social preview rendered by `ghagent assets` (`assets/social-preview.png` and `.svg`).
+- A request-flow diagram in Mermaid, translated into all six README files and repeated on the wiki home and architecture pages: the order of the checks, the branch of each layer and the decision array every branch returns.
 
 ### Changed
 

@@ -16,6 +16,7 @@
 ## विषय-सूची
 
 - [यह क्या करता है](#यह-क्या-करता-है)
+- [अनुरोध पर निर्णय कैसे होता है](#अनुरोध-पर-निर्णय-कैसे-होता-है)
 - [आवश्यकताएँ](#आवश्यकताएँ)
 - [इंस्टॉल](#इंस्टॉल)
 - [त्वरित शुरुआत](#त्वरित-शुरुआत)
@@ -54,6 +55,60 @@
 - **इंफ्रास्ट्रक्चर की गड़बड़ी पर कुछ भी fail-closed नहीं होता।** डेटाबेस या API का बंद होना "डेटा नहीं है" है, "मना कर दो" नहीं — देखें [ADR-006](docs/adr.md)।
 
 यह शील्ड **क्या नहीं है**: prepared statements, आउटपुट एस्केपिंग, CSP, ऑथेंटिकेशन या सेशन सुरक्षा का विकल्प नहीं। यह समय और दृश्यता देता है; एप्लिकेशन के दोष ठीक नहीं करता।
+
+## अनुरोध पर निर्णय कैसे होता है
+
+`inspect()` परतों को एक निश्चित क्रम में देखता है: सस्ती जाँच पहले, नेटवर्क सबसे अंत में, और भरोसेमंद पता किसी भी काम से पहले बाहर निकल जाता है। हर शाखा अंत में वही निर्णय ऐरे देती है: `blocked`, `status`, `reason`, `detail`, `score` और `findings`।
+
+```mermaid
+flowchart TD
+    REQ(["HTTP अनुरोध"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"सक्षम है?"}
+    ENABLED -->|नहीं| ALLOW(["अनुमति"])
+    ENABLED -->|हाँ| TRUSTED{"क्लाइंट IP trusted_ips में है?"}
+    TRUSTED -->|हाँ, गिना नहीं जाता| ALLOW
+    TRUSTED -->|नहीं| BLOCKED{"पता ब्लॉक है?"}
+    BLOCKED -->|हाँ| DENY403["403 ip_blocked"]
+    BLOCKED -->|नहीं| FAILS{"विफल प्रयास सीमा पर?"}
+    FAILS -->|हाँ| BLOCK1["एक बार ब्लॉक"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|नहीं| RATE{"रेट लिमिट पार हुई?"}
+    RATE -->|हाँ| BLOCK2["300 सेकंड ब्लॉक"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|नहीं| REPUTATION["IP प्रतिष्ठा: कैश, वैकल्पिक प्रदाता, सर्किट ब्रेकर"]
+    REPUTATION --> SCORED{"दुरुपयोग स्कोर"}
+    SCORED -->|block_score और अधिक| BLOCK3["ब्लॉक और घटना"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|flag_score और अधिक| JOURNAL1["केवल जर्नल"]
+    JOURNAL1 --> SCAN["पेलोड जाँच: GET, POST, REQUEST_URI पर 6 नियम"]
+    SCORED -->|कम, डेटा नहीं या विफलता| SCAN
+    SCAN --> FINDING{"स्कोर"}
+    FINDING -->|block मोड, सीमा पूरी| BLOCK4["जर्नल और ब्लॉक"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|challenge मोड, सीमा पूरी| DENY403E["403 challenge_required"]
+    FINDING -->|संदिग्ध| JOURNAL2["हर 10 मिनट में एक बार जर्नल"]
+    JOURNAL2 --> HEADERS["हेडर जाँच: User-Agent"]
+    FINDING -->|स्वच्छ| HEADERS
+    HEADERS -->|स्कैनर| JOURNAL3["जर्नल या ब्लॉक"]
+    HEADERS -->|स्वच्छ| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["निर्णय ऐरे: blocked, status, reason, detail, score, findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["एप्लिकेशन या त्रुटि प्रतिक्रिया"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+मोड की शाखाएँ स्कोर के पास हैं, सबसे ऊपर नहीं: `monitor` और `challenge` किसी निष्कर्ष पर प्रतिक्रिया बदलते हैं, जाँचों का क्रम नहीं।
 
 ## आवश्यकताएँ
 

@@ -16,6 +16,7 @@
 ## Table of contents
 
 - [What it does](#what-it-does)
+- [How a request is decided](#how-a-request-is-decided)
 - [Requirements](#requirements)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -54,6 +55,60 @@ Two rules shape every decision:
 - **Nothing fails closed on infrastructure trouble.** A database or API outage means "no data", not "deny" — see [ADR-006](docs/adr.md).
 
 What the shield is **not**: a replacement for prepared statements, output escaping, CSP, authentication or session security. It buys time and visibility; it does not fix application defects.
+
+## How a request is decided
+
+`inspect()` walks the layers in a fixed order: cheap checks first, the network last, and a trusted address leaves before any work is done. Every branch ends in the same decision array: `blocked`, `status`, `reason`, `detail`, `score` and `findings`.
+
+```mermaid
+flowchart TD
+    REQ(["HTTP request"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"enabled?"}
+    ENABLED -->|no| ALLOW(["allow"])
+    ENABLED -->|yes| TRUSTED{"client IP in trusted_ips?"}
+    TRUSTED -->|yes, never counted| ALLOW
+    TRUSTED -->|no| BLOCKED{"address blocked?"}
+    BLOCKED -->|yes| DENY403["403 ip_blocked"]
+    BLOCKED -->|no| FAILS{"failed attempts at limit?"}
+    FAILS -->|yes| BLOCK1["block once"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|no| RATE{"rate limit exceeded?"}
+    RATE -->|yes| BLOCK2["block 300 s"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|no| REPUTATION["IP reputation: cache, provider fallback, breaker"]
+    REPUTATION --> SCORED{"abuse score"}
+    SCORED -->|block_score and above| BLOCK3["block + incident"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|flag_score and above| JOURNAL1["journal only"]
+    JOURNAL1 --> SCAN["payload scan: 6 rules over GET, POST, REQUEST_URI"]
+    SCORED -->|below, no data or outage| SCAN
+    SCAN --> FINDING{"score"}
+    FINDING -->|block mode, threshold reached| BLOCK4["journal + block"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|challenge mode, threshold reached| DENY403E["403 challenge_required"]
+    FINDING -->|suspicious| JOURNAL2["journal once per 10 min"]
+    JOURNAL2 --> HEADERS["header scan: User-Agent"]
+    FINDING -->|clean| HEADERS
+    HEADERS -->|scanner| JOURNAL3["journal or block"]
+    HEADERS -->|clean| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["decision array: blocked, status, reason, detail, score, findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["application or error response"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+The mode branches sit next to the score, not at the top, because `monitor` and `challenge` change the reaction to a finding, not the order of the checks.
 
 ## Requirements
 

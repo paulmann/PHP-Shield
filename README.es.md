@@ -16,6 +16,7 @@
 ## Índice
 
 - [Qué hace](#qué-hace)
+- [Cómo se decide una petición](#cómo-se-decide-una-petición)
 - [Requisitos](#requisitos)
 - [Instalación](#instalación)
 - [Inicio rápido](#inicio-rápido)
@@ -54,6 +55,60 @@ Dos reglas condicionan cada decisión:
 - **Nada falla en cerrado ante problemas de infraestructura.** Una caída de la base de datos o de la API significa «sin datos», no «denegar»; véase [ADR-006](docs/adr.md).
 
 Lo que el shield **no** es: un sustituto de las consultas preparadas, el escape de salida, la CSP, la autenticación o la seguridad de sesiones. Gana tiempo y visibilidad; no corrige los defectos de la aplicación.
+
+## Cómo se decide una petición
+
+`inspect()` recorre las capas en un orden fijo: primero las comprobaciones baratas, la red al final, y una dirección de confianza sale del camino antes de cualquier trabajo. Toda rama termina en el mismo array de decisión: `blocked`, `status`, `reason`, `detail`, `score` y `findings`.
+
+```mermaid
+flowchart TD
+    REQ(["Petición HTTP"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"¿activado?"}
+    ENABLED -->|no| ALLOW(["permitir"])
+    ENABLED -->|sí| TRUSTED{"¿IP del cliente en trusted_ips?"}
+    TRUSTED -->|sí, nunca se cuenta| ALLOW
+    TRUSTED -->|no| BLOCKED{"¿dirección bloqueada?"}
+    BLOCKED -->|sí| DENY403["403 ip_blocked"]
+    BLOCKED -->|no| FAILS{"¿intentos fallidos en el límite?"}
+    FAILS -->|sí| BLOCK1["bloqueo único"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|no| RATE{"¿límite de tasa superado?"}
+    RATE -->|sí| BLOCK2["bloqueo de 300 s"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|no| REPUTATION["reputación IP: caché, proveedor de respaldo, cortacircuitos"]
+    REPUTATION --> SCORED{"puntuación de abuso"}
+    SCORED -->|block_score y superior| BLOCK3["bloqueo e incidencia"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|flag_score y superior| JOURNAL1["solo registro"]
+    JOURNAL1 --> SCAN["análisis de la carga: 6 reglas sobre GET, POST, REQUEST_URI"]
+    SCORED -->|por debajo, sin datos o caída| SCAN
+    SCAN --> FINDING{"puntuación"}
+    FINDING -->|modo block, umbral alcanzado| BLOCK4["registro y bloqueo"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|modo challenge, umbral alcanzado| DENY403E["403 challenge_required"]
+    FINDING -->|sospechoso| JOURNAL2["registro cada 10 minutos"]
+    JOURNAL2 --> HEADERS["análisis de cabeceras: User-Agent"]
+    FINDING -->|limpio| HEADERS
+    HEADERS -->|escáner| JOURNAL3["registro o bloqueo"]
+    HEADERS -->|limpio| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["array de decisión: blocked, status, reason, detail, score, findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["aplicación o respuesta de error"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+Las ramas de modo están junto a la puntuación, no al principio: `monitor` y `challenge` cambian la reacción ante un hallazgo, no el orden de las comprobaciones.
 
 ## Requisitos
 

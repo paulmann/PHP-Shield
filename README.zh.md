@@ -16,6 +16,7 @@
 ## 目录
 
 - [功能说明](#功能说明)
+- [一次请求如何被判定](#一次请求如何被判定)
 - [环境要求](#环境要求)
 - [安装](#安装)
 - [快速开始](#快速开始)
@@ -54,6 +55,60 @@
 - **遇到基础设施故障时绝不失败关闭。** 数据库或 API 中断意味着“没有数据”，而不是“拒绝”——参见 [ADR-006](docs/adr.md)。
 
 PHP Shield **不是**什么：它不能替代预处理语句、输出转义、CSP、身份认证或会话安全。它换来的是时间与可见性，而不是修复应用本身的缺陷。
+
+## 一次请求如何被判定
+
+`inspect()` 按固定顺序逐层检查：先做便宜的检查，网络查询放在最后，可信地址在任何工作之前直接放行。所有分支最终都落到同一个决策数组：`blocked`、`status`、`reason`、`detail`、`score` 与 `findings`。
+
+```mermaid
+flowchart TD
+    REQ(["HTTP 请求"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"已启用？"}
+    ENABLED -->|否| ALLOW(["放行"])
+    ENABLED -->|是| TRUSTED{"客户端 IP 在 trusted_ips 中？"}
+    TRUSTED -->|是，不计数| ALLOW
+    TRUSTED -->|否| BLOCKED{"地址已被封禁？"}
+    BLOCKED -->|是| DENY403["403 ip_blocked"]
+    BLOCKED -->|否| FAILS{"失败次数达到上限？"}
+    FAILS -->|是| BLOCK1["封禁一次"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|否| RATE{"超出速率限制？"}
+    RATE -->|是| BLOCK2["封禁 300 秒"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|否| REPUTATION["IP 信誉：缓存、备用提供商、熔断器"]
+    REPUTATION --> SCORED{"滥用评分"}
+    SCORED -->|达到 block_score| BLOCK3["封禁并记录事件"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|达到 flag_score| JOURNAL1["仅记录"]
+    JOURNAL1 --> SCAN["载荷检测：6 条规则，扫描 GET、POST、REQUEST_URI"]
+    SCORED -->|低于阈值、无数据或故障| SCAN
+    SCAN --> FINDING{"评分"}
+    FINDING -->|block 模式且达到阈值| BLOCK4["记录并封禁"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|challenge 模式且达到阈值| DENY403E["403 challenge_required"]
+    FINDING -->|可疑| JOURNAL2["每 10 分钟记录一次"]
+    JOURNAL2 --> HEADERS["请求头检测：User-Agent"]
+    FINDING -->|干净| HEADERS
+    HEADERS -->|扫描器| JOURNAL3["记录或封禁"]
+    HEADERS -->|干净| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["决策数组：blocked、status、reason、detail、score、findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["应用继续执行或返回错误"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+模式分支放在评分旁边而不是最上方：`monitor` 与 `challenge` 改变的是对命中的反应，而不是检查顺序。
 
 ## 环境要求
 

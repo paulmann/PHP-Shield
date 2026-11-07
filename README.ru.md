@@ -16,6 +16,7 @@
 ## Содержание
 
 - [Что он делает](#что-он-делает)
+- [Как принимается решение по запросу](#как-принимается-решение-по-запросу)
 - [Требования](#требования)
 - [Установка](#установка)
 - [Быстрый старт](#быстрый-старт)
@@ -54,6 +55,60 @@
 - **Ничто не переходит в закрытое состояние при сбое инфраструктуры.** Недоступность базы данных или API означает «нет данных», а не «запретить» — см. [ADR-006](docs/adr.md).
 
 Чем щит **не** является: заменой подготовленных выражений, экранирования вывода, CSP, аутентификации или безопасности сессий. Он выигрывает время и даёт наблюдаемость; дефекты приложения он не исправляет.
+
+## Как принимается решение по запросу
+
+`inspect()` проходит слои в фиксированном порядке: сначала дешёвые проверки, сеть — последней, а доверенный адрес выходит из схемы до любой работы. Любая ветка заканчивается одним и тем же массивом решения: `blocked`, `status`, `reason`, `detail`, `score` и `findings`.
+
+```mermaid
+flowchart TD
+    REQ(["HTTP-запрос"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"включён?"}
+    ENABLED -->|нет| ALLOW(["разрешено"])
+    ENABLED -->|да| TRUSTED{"IP клиента в trusted_ips?"}
+    TRUSTED -->|да, не считается| ALLOW
+    TRUSTED -->|нет| BLOCKED{"адрес заблокирован?"}
+    BLOCKED -->|да| DENY403["403 ip_blocked"]
+    BLOCKED -->|нет| FAILS{"счётчик неудач исчерпан?"}
+    FAILS -->|да| BLOCK1["блокировка один раз"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|нет| RATE{"лимит частоты превышен?"}
+    RATE -->|да| BLOCK2["блокировка 300 с"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|нет| REPUTATION["репутация IP: кэш, резервный провайдер, предохранитель"]
+    REPUTATION --> SCORED{"оценка злоупотреблений"}
+    SCORED -->|block_score и выше| BLOCK3["блокировка и инцидент"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|flag_score и выше| JOURNAL1["только журнал"]
+    JOURNAL1 --> SCAN["проверка данных: 6 правил по GET, POST, REQUEST_URI"]
+    SCORED -->|ниже, нет данных или сбой| SCAN
+    SCAN --> FINDING{"оценка"}
+    FINDING -->|режим block, порог достигнут| BLOCK4["журнал и блокировка"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|режим challenge, порог достигнут| DENY403E["403 challenge_required"]
+    FINDING -->|подозрительно| JOURNAL2["журнал раз в 10 минут"]
+    JOURNAL2 --> HEADERS["проверка заголовков: User-Agent"]
+    FINDING -->|чисто| HEADERS
+    HEADERS -->|сканер| JOURNAL3["журнал или блокировка"]
+    HEADERS -->|чисто| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["массив решения: blocked, status, reason, detail, score, findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["приложение или ответ с ошибкой"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+Ветвление по режимам стоит рядом с оценкой, а не в начале схемы: `monitor` и `challenge` меняют реакцию на находку, но не порядок проверок.
 
 ## Требования
 

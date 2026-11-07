@@ -16,6 +16,7 @@
 ## Inhalt
 
 - [Was das Shield leistet](#was-das-shield-leistet)
+- [Wie über eine Anfrage entschieden wird](#wie-über-eine-anfrage-entschieden-wird)
 - [Voraussetzungen](#voraussetzungen)
 - [Installation](#installation)
 - [Schnellstart](#schnellstart)
@@ -54,6 +55,60 @@ Zwei Regeln bestimmen jede Entscheidung:
 - **Bei Infrastrukturproblemen wird nichts geschlossen (kein „fail closed").** Ein Ausfall von Datenbank oder API bedeutet „keine Daten", nicht „ablehnen" — siehe [ADR-006](docs/adr.md).
 
 Was das Shield **nicht** ist: ein Ersatz für Prepared Statements, Ausgabe-Escaping, CSP, Authentifizierung oder Session-Sicherheit. Es verschafft Zeit und Sichtbarkeit; Fehler in der Anwendung behebt es nicht.
+
+## Wie über eine Anfrage entschieden wird
+
+`inspect()` durchläuft die Schichten in fester Reihenfolge: billige Prüfungen zuerst, das Netzwerk zuletzt, und eine vertrauenswürdige Adresse verlässt den Pfad, bevor Arbeit entsteht. Jeder Zweig endet im selben Entscheidungsarray: `blocked`, `status`, `reason`, `detail`, `score` und `findings`.
+
+```mermaid
+flowchart TD
+    REQ(["HTTP-Anfrage"]) --> INSPECT["Shield::inspect()"]
+    INSPECT --> ENABLED{"aktiviert?"}
+    ENABLED -->|nein| ALLOW(["erlaubt"])
+    ENABLED -->|ja| TRUSTED{"Client-IP in trusted_ips?"}
+    TRUSTED -->|ja, wird nie gezählt| ALLOW
+    TRUSTED -->|nein| BLOCKED{"Adresse gesperrt?"}
+    BLOCKED -->|ja| DENY403["403 ip_blocked"]
+    BLOCKED -->|nein| FAILS{"Fehlversuche am Limit?"}
+    FAILS -->|ja| BLOCK1["einmalige Sperre"]
+    BLOCK1 --> DENY403B["403 too_many_failures"]
+    FAILS -->|nein| RATE{"Ratenlimit überschritten?"}
+    RATE -->|ja| BLOCK2["Sperre 300 s"]
+    BLOCK2 --> DENY429["429 rate_limited"]
+    RATE -->|nein| REPUTATION["IP-Reputation: Cache, Ausweich-Provider, Circuit Breaker"]
+    REPUTATION --> SCORED{"Missbrauchswert"}
+    SCORED -->|block_score und höher| BLOCK3["Sperre und Vorfall"]
+    BLOCK3 --> DENY403C["403 ip_reputation"]
+    SCORED -->|flag_score und höher| JOURNAL1["nur Journal"]
+    JOURNAL1 --> SCAN["Payload-Prüfung: 6 Regeln über GET, POST, REQUEST_URI"]
+    SCORED -->|darunter, keine Daten oder Ausfall| SCAN
+    SCAN --> FINDING{"Bewertung"}
+    FINDING -->|Modus block, Schwelle erreicht| BLOCK4["Journal und Sperre"]
+    BLOCK4 --> DENY403D["403 threat_detected"]
+    FINDING -->|Modus challenge, Schwelle erreicht| DENY403E["403 challenge_required"]
+    FINDING -->|verdächtig| JOURNAL2["Journal alle 10 Minuten"]
+    JOURNAL2 --> HEADERS["Header-Prüfung: User-Agent"]
+    FINDING -->|sauber| HEADERS
+    HEADERS -->|Scanner| JOURNAL3["Journal oder Sperre"]
+    HEADERS -->|sauber| ALLOW
+    JOURNAL3 --> ALLOW
+    ALLOW --> DECISION["Entscheidungsarray: blocked, status, reason, detail, score, findings"]
+    DENY403 --> DECISION
+    DENY403B --> DECISION
+    DENY429 --> DECISION
+    DENY403C --> DECISION
+    DENY403D --> DECISION
+    DENY403E --> DECISION
+    DECISION --> APP(["Anwendung oder Fehlerantwort"])
+    classDef allow fill:#d3f9d8,stroke:#2f9e44,color:#000000
+    classDef deny fill:#ffe3e3,stroke:#c92a2a,color:#000000
+    classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#000000
+    class ALLOW,APP allow
+    class DENY403,DENY403B,DENY429,DENY403C,DENY403D,DENY403E deny
+    class INSPECT,SCAN,DECISION step
+```
+
+Die Modus-Zweige stehen neben der Bewertung, nicht am Anfang: `monitor` und `challenge` ändern die Reaktion auf einen Fund, nicht die Reihenfolge der Prüfungen.
 
 ## Voraussetzungen
 
