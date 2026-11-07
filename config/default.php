@@ -135,7 +135,16 @@ return [
         'session_timeout' => 3600,
         'cookie_samesite' => 'Strict',
         // null = decide from $_SERVER['HTTPS']
-        'cookie_secure' => null
+        'cookie_secure' => null,
+        // IP allowlist for the dashboard. DISABLED by default (an empty list
+        // means no restriction). Fill it to restrict the panel to known
+        // networks; an address outside the list gets 403 before the dashboard
+        // touches the database. Forwarded headers are honoured only from
+        // `trusted_proxies` above.
+        'allowed_ips' => [
+            // '203.0.113.0/24',
+            // '198.51.100.7',
+        ]
     ],
 
     // Rate limiter driver: 'database' or 'redis'

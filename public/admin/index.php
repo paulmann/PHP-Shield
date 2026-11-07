@@ -9,6 +9,7 @@
 
 declare(strict_types=1);
 
+use Deynekin\PhpShield\Admin\AdminAccess;
 use Deynekin\PhpShield\Admin\AdminDashboard;
 use Deynekin\PhpShield\Storage\MysqlBlockStore;
 use Deynekin\PhpShield\Support\SecurityHeaders;
@@ -30,6 +31,16 @@ $config = is_file($configFile) ? require $configFile : [];
 
 if (!is_array($config)) {
     $config = [];
+}
+
+// IP allowlist (admin.allowed_ips). Empty list = disabled. Checked before the
+// database is touched, so a stranger cannot even open a connection.
+$access = new AdminAccess($config);
+
+if (!$access->allowsRequest($_SERVER)) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Forbidden.');
 }
 
 if (!class_exists(mysqli::class)) {

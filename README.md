@@ -326,7 +326,23 @@ Tables: `php_shield_ip_blocks`, `php_shield_incidents`, `php_shield_failed_attem
 - every state-changing form carries a per-session anti-CSRF token;
 - login is rate limited (5 failures → 5 min lockout), the session id is regenerated on login;
 - session cookie is `HttpOnly`, `SameSite=Strict`, `Secure` on HTTPS;
-- the configuration dump masks passwords, tokens and keys before rendering.
+- the configuration dump masks passwords, tokens and keys before rendering;
+- an **IP allowlist** (`admin.allowed_ips`, **disabled by default**) can restrict the panel to known
+  networks; an address outside the list gets `403` before the dashboard opens a database connection.
+
+```php
+$config['admin']['allowed_ips'] = [
+    '203.0.113.0/24',   // office
+    '198.51.100.7',     // jump host, /32
+    '2001:db8::/32',    // IPv6
+];
+// empty array = no restriction (default)
+```
+
+Entries are IPv4/IPv6 CIDR; a bare address means `/32`. When the application sits behind a proxy, list
+that proxy in `trusted_proxies` — otherwise the forwarded header is ignored and the gate sees the proxy
+address. A string such as `'203.0.113.0/24, 198.51.100.7'` is accepted as well, which keeps
+environment-driven configuration simple.
 
 Generate a hash and protect the endpoint at the web-server level too:
 

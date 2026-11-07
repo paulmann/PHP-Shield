@@ -37,7 +37,36 @@ $config['admin'] = [
     'session_timeout' => 3600,
     'cookie_samesite' => 'Strict',
     'cookie_secure' => null,          // null = decide from $_SERVER['HTTPS']
+    'allowed_ips' => [],              // empty = no IP restriction (default)
 ];
+```
+
+## IP allowlist
+
+The gate is **off by default**: an empty `admin.allowed_ips` lets everyone reach the login form, which
+still needs the password hash. Fill the list and the panel answers `403` to any other address — before
+the dashboard opens a database connection.
+
+```php
+'allowed_ips' => [
+    '203.0.113.0/24',   // office network
+    '198.51.100.7',     // jump host (/32)
+    '2001:db8::/32',    // IPv6
+],
+```
+
+- IPv4 and IPv6 CIDR are both accepted; a bare address means `/32`;
+- a single string (`'203.0.113.0/24, 198.51.100.7'`) works too, which suits environment-driven config;
+- behind a proxy, add the proxy to `trusted_proxies` — the gate resolves the client address through the
+  same rules as the shield, and an untrusted `X-Forwarded-For` is ignored on purpose;
+- an unreachable panel is worse than a restricted one: keep the break-glass path (web-server auth or a
+  VPN) in mind before you enable the list, and verify from a network that *is* on it.
+
+Quick check without a browser:
+
+```php
+$access = new Deynekin\PhpShield\Admin\AdminAccess($config);
+$access->allows('203.0.113.9');   // true
 ```
 
 Serve it over HTTPS only, and restrict the path at the web-server level as well: an IP allowlist, a

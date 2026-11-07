@@ -23,6 +23,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follo
 
 ### Added
 
+- **Admin IP allowlist** (`admin.allowed_ips`, **off by default**): an empty list keeps the panel open
+  (password still required), a filled one answers `403` to every other address before the dashboard
+  touches the database. IPv4/IPv6 CIDR, a bare address means `/32`, a comma-separated string is
+  accepted for environment-driven config, and the client address is resolved through `trusted_proxies`
+  so a spoofed `X-Forwarded-For` cannot enter the list. New `Admin\AdminAccess` (also usable from the
+  CLI) and 7 tests.
 - **Asynchronous reputation by default.** The request path no longer calls AbuseIPDB: a known address
   is answered from the cache, an unknown one is queued (`php_shield_reputation_queue`) and the worker
   fills the cache out of band. `ip_reputation.mode` switches back to `sync` at any time.
